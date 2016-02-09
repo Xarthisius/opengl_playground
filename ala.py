@@ -5,6 +5,7 @@ from PyQt4.QtOpenGL import QGLWidget
 # PyOpenGL imports
 import OpenGL.GL as gl
 import OpenGL.arrays.vbo as glvbo
+from PIL import Image
 
 # Window creation function.
 def create_window(window_class):
@@ -96,20 +97,34 @@ void main()
 
 # Vertex shader2
 VS2 = """
+#version 330 core
+
+// Input vertex data, different for all executions of this shader.
+layout(location = 0) in vec3 vertexPosition_modelspace;
+
+// Output data ; will be interpolated for each fragment.
+out vec2 UV;
+
 void main()
 {
-    gl_Position = ftransform();
+    gl_Position = vec4(vertexPosition_modelspace,1);
+    UV = (vertexPosition_modelspace.xy+vec2(1,1))/2.0;
 }
 """
 
 # Fragment shader2
 FS2 = """
-#version 330
-out vec4 out_color;
+#version 330 core
 
-void main()
-{
-    out_color = vec4(0., 1., 1., 1.);
+in vec2 UV;
+
+out vec3 color;
+
+uniform sampler2D renderedTexture;
+uniform float time;
+
+void main(){
+   color = texture( renderedTexture, UV + 0.005*vec2( sin(1024.0*UV.x),cos(768.0*UV.y)) ).xyz;
 }
 """
 
@@ -141,6 +156,7 @@ class GLPlotWidget(QGLWidget):
         # initialize FrameBuffer
         fbo = gl.glGenFramebuffers(1)
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+
         depthbuffer = gl.glGenRenderbuffers(1)
         gl.glBindRenderbuffer(gl.GL_RENDERBUFFER, depthbuffer)
         gl.glRenderbufferStorage(gl.GL_RENDERBUFFER, gl.GL_DEPTH_COMPONENT24,
@@ -152,34 +168,40 @@ class GLPlotWidget(QGLWidget):
         # --- end FB init
 
         # generate the texture we render to, and set parameters
-        rendertarget = gl.glGenTextures(1)   # create target texture
-        gl.glBindTexture(gl.GL_TEXTURE_2D, rendertarget)  # bind to it
-        # gl.glTexEnvf(gl.GL_TEXTURE_ENV, gl.GL_TEXTURE_ENV_MODE, gl.GL_MODULATE); # ???
+        renderedTexture = gl.glGenTextures(1)   # create target texture
+        # bind to new texture, all future texture functions will modify this
+        # particular one
+        gl.glBindTexture(gl.GL_TEXTURE_2D, renderedTexture)
         # set how our texture behaves on x,y boundaries
         gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
         gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
-        # set how our texture ???
+        # set how our texture is filtered
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
 
-        # occupy width x height texture memory
+        # occupy width x height texture memory, (None at the end == empty
+        # image)
         gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.width,
                         self.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_INT, None)
 
         # --- end texture init
 
-        # ???
+        # Set "renderedTexture" as our colour attachement #0
         gl.glFramebufferTexture2D(
             gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D,
-            rendertarget,
+            renderedTexture,
             0 # mipmap level, normally 0
         )
 
         status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER)
         assert status == gl.GL_FRAMEBUFFER_COMPLETE, status
+
+        # bind to fb
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
         # viewport is shared with the main context
-        gl.glPushAttrib(gl.GL_VIEWPORT_BIT)
+        gl.glViewport(0, 0, self.width, self.height)
+        #  Clear the screen
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
         # --- at this point everything should be set, draw away
 
         # THIS IS DRAWING PART
@@ -195,14 +217,36 @@ class GLPlotWidget(QGLWidget):
         gl.glDrawArrays(gl.GL_LINE_STRIP, 0, len(self.data))
         # END OF DRAWING PART
 
+        debug_buffer = gl.glReadPixels(0, 0, self.width, self.height, gl.GL_RGB,
+                                       gl.GL_UNSIGNED_BYTE)
+        image = Image.frombytes(mode="RGB", size=(self.width, self.height),
+                                data=debug_buffer)
+        image = image.transpose(Image.FLIP_TOP_BOTTOM)
+        image.save("/tmp/foo.jpg")
+
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # unbind FB
-        gl.glBindTexture(gl.GL_TEXTURE_2D, rendertarget) # bind to result ??
+        gl.glBindTexture(gl.GL_TEXTURE_2D, renderedTexture) # bind to result ??
 
         # THIS IS DRAWING PART II
         # vertex arrays must be enabled using glEnableClientState
         gl.glEnable(gl.GL_TEXTURE_2D)  # ???
+
+        texId = gl.glGetUniformLocation(self.my_shaders_program, "renderedTexture")
+
         gl.glUseProgram(self.my_shaders_program)
         # HOW TO DRAW TEXTURE
+        gl.glActiveTexture(gl.GL_TEXTURE0);
+        gl.glBindTexture(gl.GL_TEXTURE_2D, renderedTexture) # bind to result ??
+        # Set our "renderedTexture" sampler to user Texture Unit 0
+        gl.glUniform1i(texId, 0);
+        gl.glBegin(gl.GL_QUADS)
+        gl.glVertex3f(-1.0,-1.0, 0.0)
+        gl.glVertex3f( 1.0,-1.0, 0.0)
+        gl.glVertex3f( 1.0, 1.0, 0.0)
+        gl.glVertex3f(-1.0, 1.0, 0.0)
+        gl.glEnd()
+        #gl.glDrawElements(gl.GL_QUADS, 1, gl.GL_UNSIGNED_SHORT, indices)
+
         # gl.glDrawArrays(gl.GL_LINE_STRIP, 0, len(self.data))
         # END OF DRAWING PART II
 
