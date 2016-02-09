@@ -105,10 +105,11 @@ void main()
 # Fragment shader2
 FS2 = """
 #version 330
+out vec4 out_color;
+
 void main()
 {
-    // We simply set the pixel color to yellow.
-    gl_FragColor = vec4(0., 1., 1., 1.);
+    out_color = vec4(0., 1., 1., 1.);
 }
 """
 
@@ -200,13 +201,9 @@ class GLPlotWidget(QGLWidget):
         # THIS IS DRAWING PART II
         # vertex arrays must be enabled using glEnableClientState
         gl.glEnable(gl.GL_TEXTURE_2D)  # ???
-        gl.glEnableClientState(gl.GL_VERTEX_ARRAY)
-        gl.glEnableClientState(gl.GL_TEXTURE_COORD_ARRAY)
-        Varray = np.array([[0,0],[0,1],[1,1],[1,0]], np.float)
-        gl.glVertexPointer(2, gl.GL_FLOAT, 0, Varray)
-        gl.glTexCoordPointer(2, gl.GL_FLOAT, 0, Varray)
-        indices = [0,1,2,3]
-        gl.glDrawElements(gl.GL_QUADS, 1, gl.GL_UNSIGNED_SHORT, indices)
+        gl.glUseProgram(self.my_shaders_program)
+        # HOW TO DRAW TEXTURE
+        # gl.glDrawArrays(gl.GL_LINE_STRIP, 0, len(self.data))
         # END OF DRAWING PART II
 
 
