@@ -1,3 +1,4 @@
+import numpy as np
 # PyQt4 imports
 from PyQt4 import QtGui, QtCore, QtOpenGL
 from PyQt4.QtOpenGL import QGLWidget
@@ -93,6 +94,24 @@ void main()
 }
 """
 
+# Vertex shader2
+VS2 = """
+void main()
+{
+    gl_Position = ftransform();
+}
+"""
+
+# Fragment shader2
+FS2 = """
+#version 330
+void main()
+{
+    // We simply set the pixel color to yellow.
+    gl_FragColor = vec4(0., 1., 1., 1.);
+}
+"""
+
 class GLPlotWidget(QGLWidget):
     # default window size
     width, height = 600, 600
@@ -109,11 +128,60 @@ class GLPlotWidget(QGLWidget):
         fs = compile_fragment_shader(FS)
         # compile the vertex shader
         self.shaders_program = link_shader_program(vs, fs)
+        vs2 = compile_vertex_shader(VS2)
+        fs2 = compile_fragment_shader(FS2)
+        self.my_shaders_program = link_shader_program(vs2, fs2)
 
     def paintGL(self):
         """Paint the scene."""
-        # clear the buffer
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        # clear the color and depth buffer
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+
+        # initialize FrameBuffer
+        fbo = gl.glGenFramebuffers(1)
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+        depthbuffer = gl.glGenRenderbuffers(1)
+        gl.glBindRenderbuffer(gl.GL_RENDERBUFFER, depthbuffer)
+        gl.glRenderbufferStorage(gl.GL_RENDERBUFFER, gl.GL_DEPTH_COMPONENT24,
+                                 self.width, self.height)
+        gl.glFramebufferRenderbuffer(
+            gl.GL_FRAMEBUFFER, gl.GL_DEPTH_ATTACHMENT, gl.GL_RENDERBUFFER,
+            depthbuffer
+        )
+        # --- end FB init
+
+        # generate the texture we render to, and set parameters
+        rendertarget = gl.glGenTextures(1)   # create target texture
+        gl.glBindTexture(gl.GL_TEXTURE_2D, rendertarget)  # bind to it
+        # gl.glTexEnvf(gl.GL_TEXTURE_ENV, gl.GL_TEXTURE_ENV_MODE, gl.GL_MODULATE); # ???
+        # set how our texture behaves on x,y boundaries
+        gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
+        gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
+        # set how our texture ???
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+
+        # occupy width x height texture memory
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.width,
+                        self.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_INT, None)
+
+        # --- end texture init
+
+        # ???
+        gl.glFramebufferTexture2D(
+            gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D,
+            rendertarget,
+            0 # mipmap level, normally 0
+        )
+
+        status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER)
+        assert status == gl.GL_FRAMEBUFFER_COMPLETE, status
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+        # viewport is shared with the main context
+        gl.glPushAttrib(gl.GL_VIEWPORT_BIT)
+        # --- at this point everything should be set, draw away
+
+        # THIS IS DRAWING PART
         # bind the VBO
         self.vbo.bind()
         # tell OpenGL that the VBO contains an array of vertices
@@ -124,6 +192,23 @@ class GLPlotWidget(QGLWidget):
         gl.glUseProgram(self.shaders_program)
         # draw "count" points from the VBO
         gl.glDrawArrays(gl.GL_LINE_STRIP, 0, len(self.data))
+        # END OF DRAWING PART
+
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0) # unbind FB
+        gl.glBindTexture(gl.GL_TEXTURE_2D, rendertarget) # bind to result ??
+
+        # THIS IS DRAWING PART II
+        # vertex arrays must be enabled using glEnableClientState
+        gl.glEnable(gl.GL_TEXTURE_2D)  # ???
+        gl.glEnableClientState(gl.GL_VERTEX_ARRAY)
+        gl.glEnableClientState(gl.GL_TEXTURE_COORD_ARRAY)
+        Varray = np.array([[0,0],[0,1],[1,1],[1,0]], np.float)
+        gl.glVertexPointer(2, gl.GL_FLOAT, 0, Varray)
+        gl.glTexCoordPointer(2, gl.GL_FLOAT, 0, Varray)
+        indices = [0,1,2,3]
+        gl.glDrawElements(gl.GL_QUADS, 1, gl.GL_UNSIGNED_SHORT, indices)
+        # END OF DRAWING PART II
+
 
     def resizeGL(self, width, height):
         """Called upon window resizing: reinitialize the viewport."""
